@@ -1,0 +1,159 @@
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SumaMente</title>
+  <style>
+    body { font-family: Arial, sans-serif; background: #eef2f3; text-align: center; padding: 2em; }
+    .container { background: white; max-width: 600px; margin: auto; padding: 2em; border-radius: 12px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+    input, button, video, canvas { padding: 1em; margin-top: 1em; width: 90%; border-radius: 5px; border: 1px solid #ccc; font-size: 16px; }
+    button { background-color: #28a745; color: white; cursor: pointer; }
+    button:hover { background-color: #218838; }
+    #output { margin-top: 2em; font-weight: bold; color: #333; white-space: pre-wrap; }
+    footer { margin-top: 2em; font-size: 14px; color: #666; }
+    video, canvas { display: none; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>SumaMente 🧠</h1>
+    <p>Haz cualquier pregunta de matemáticas o pide una definición. También puedes hablar, escanear o subir una imagen.<br>Ejemplos: <em>"cuanto es 15 dividido entre 3"</em>, <em>"que es la multiplicacion"</em>, <em>"cual es el area de un circulo"</em></p>
+    <input type="text" id="inputProblem" placeholder="Escribe aqui tu problema o pregunta">
+    <button onclick="solve()">Resolver / Explicar</button>
+    <button onclick="startCamera()">📷 Escanear problema</button>
+    <input type="file" accept="image/*" onchange="handleFileUpload(event)">
+    <button onclick="startVoice()">🎤 Decir problema</button>
+    <video id="video" autoplay></video>
+    <canvas id="canvas" width="640" height="480"></canvas>
+    <div id="output"></div>
+    <footer>
+      <p>Creadores: Almaris, Iriana, Estefany, Emily</p>
+      <p>Creador principal: Cristopher - 4to D - Liceo Andres Brito Bruno</p>
+    </footer>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/tesseract.min.js"></script>
+  <script>
+    function limpiarTexto(texto) {
+      return texto
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[̀-ͯ]/g, "")
+        .replace(/[.,;:!?¿¡]/g, "")
+        .trim();
+    }
+
+    async function solve() {
+      const rawInput = document.getElementById('inputProblem').value;
+      const input = limpiarTexto(rawInput);
+      const output = document.getElementById('output');
+      output.innerText = 'Pensando...';
+
+      try {
+        const response = await fetch('https://api-inference.huggingface.co/models/google/flan-t5-base', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer hf_your_api_key_here'
+          },
+          body: JSON.stringify({ inputs: input })
+        });
+
+        const data = await response.json();
+        if (data && data[0] && data[0].generated_text) {
+          const respuesta = data[0].generated_text.trim();
+          const resultadoNumerico = evaluarExpresion(input);
+          output.innerText = resultadoNumerico !== null
+            ? `Respuesta: ${respuesta}
+Resultado numerico: ${resultadoNumerico}`
+            : `Respuesta: ${respuesta}`;
+        } else {
+          output.innerText = 'No pude encontrar una respuesta clara. Intenta con otra pregunta.';
+        }
+      } catch (error) {
+        output.innerText = 'Error al procesar la solicitud. Revisa tu conexion o intenta de nuevo.';
+      }
+    }
+
+    function evaluarExpresion(input) {
+      try {
+        const limpio = input
+          .replace(/mas/g, '+')
+          .replace(/menos/g, '-')
+          .replace(/por/g, '*')
+          .replace(/entre/g, '/')
+          .replace(/[^0-9+\-*/().]/g, '');
+        if (/^[\d+\-*/(). ]+$/.test(limpio)) {
+          return eval(limpio);
+        }
+      } catch (e) {
+        return null;
+      }
+      return null;
+    }
+
+    function startCamera() {
+      const video = document.getElementById('video');
+      const canvas = document.getElementById('canvas');
+      const input = document.getElementById('inputProblem');
+      const output = document.getElementById('output');
+
+      navigator.mediaDevices.getUserMedia({ video: true })
+        .then(stream => {
+          video.style.display = 'block';
+          video.srcObject = stream;
+          setTimeout(() => {
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            video.style.display = 'none';
+            stream.getTracks().forEach(track => track.stop());
+            Tesseract.recognize(canvas, 'spa')
+              .then(({ data: { text } }) => {
+                input.value = limpiarTexto(text);
+                solve();
+              });
+          }, 4000);
+        })
+        .catch(error => {
+          output.innerText = 'No se pudo acceder a la camara';
+        });
+    }
+
+    function handleFileUpload(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      const canvas = document.getElementById('canvas');
+      const ctx = canvas.getContext('2d');
+      const img = new Image();
+      img.onload = () => {
+        canvas.width = img.width;
+        canvas.height = img.height;
+        ctx.drawImage(img, 0, 0);
+        Tesseract.recognize(canvas, 'spa')
+          .then(({ data: { text } }) => {
+            document.getElementById('inputProblem').value = limpiarTexto(text);
+            solve();
+          });
+      };
+      img.src = URL.createObjectURL(file);
+    }
+
+    function startVoice() {
+      const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+      const input = document.getElementById('inputProblem');
+      recognition.lang = 'es-ES';
+      recognition.start();
+      recognition.onresult = function(event) {
+        const result = event.results[0][0].transcript;
+        input.value = limpiarTexto(result);
+        solve();
+      };
+      recognition.onerror = function() {
+        document.getElementById('output').innerText = 'No pude entender la voz, intenta de nuevo.';
+      };
+    }
+  </script>
+</body>
+</html>
